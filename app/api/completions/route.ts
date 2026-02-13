@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getQueue, QueueName } from "@/lib/queue";
+import { listCompletions, CompletionStatus } from "@/lib/db";
 
 /**
  * POST /api/completions
@@ -83,68 +84,44 @@ export async function POST(request: NextRequest) {
 /**
  * GET /api/completions
  *
- * Get completion status by job ID or completion ID.
+ * List completions with optional filters.
  *
  * Query params:
- *   - jobId: BullMQ job ID
- *   - completionId: Custom completion identifier
+ *   - status: Filter by status (pending|processing|completed|failed)
+ *   - limit: Max results (default: 50)
+ *   - offset: Pagination offset (default: 0)
  *
  * Response:
  *   {
- *     "job": { ... },
- *     "state": "completed" | "failed" | "active" | "waiting",
- *     "completionId": string
+ *     "completions": [...],
+ *     "count": number,
+ *     "limit": number,
+ *     "offset": number
  *   }
  */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const jobId = searchParams.get("jobId");
-    const completionId = searchParams.get("completionId");
+    const status = searchParams.get("status") as CompletionStatus | null;
+    const limit = Number(searchParams.get("limit")) || 50;
+    const offset = Number(searchParams.get("offset")) || 0;
 
-    if (!jobId && !completionId) {
-      return NextResponse.json(
-        { error: "Missing query param: jobId or completionId required" },
-        { status: 400 },
-      );
-    }
+    const completions = await listCompletions({
+      status: status ?? undefined,
+      limit,
+      offset,
+    });
 
-    const queue = getQueue(QueueName.COMPLETION);
-
-    if (jobId) {
-      // Get job by BullMQ job ID
-      const job = await queue.getJob(jobId);
-
-      if (!job) {
-        return NextResponse.json({ error: "Job not found" }, { status: 404 });
-      }
-
-      const state = await queue.getJobState(jobId);
-
-      return NextResponse.json({
-        jobId: job.id,
-        name: job.name,
-        data: job.data,
-        state,
-        progress: job.progress,
-        processedOn: job.processedOn,
-        finishedOn: job.finishedOn,
-        failedReason: job.failedReason,
-        stacktrace: job.stacktrace,
-        attemptsMade: job.attemptsMade,
-      });
-    }
-
-    // For completionId, we'd need to search jobs or maintain a separate index
-    // This is a simplified implementation
-    return NextResponse.json(
-      { error: "Lookup by completionId requires additional indexing" },
-      { status: 501 },
-    );
+    return NextResponse.json({
+      completions,
+      count: completions.length,
+      limit,
+      offset,
+    });
   } catch (error) {
-    console.error("Failed to get completion:", error);
+    console.error("Failed to list completions:", error);
     return NextResponse.json(
-      { error: "Failed to get completion" },
+      { error: "Failed to list completions" },
       { status: 500 },
     );
   }
